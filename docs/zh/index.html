@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="EyeTools 根据配置动态发现工具，并通过 MCP 和 HTTP 提供调用。">
+  <title>中文文档 · EyeTools</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <link rel="alternate" hreflang="en" href="../">
+  <link rel="alternate" hreflang="zh-CN" href="./">
+</head>
+<body>
+  <a class="skip" href="#main">跳至正文</a>
+  <header class="topbar"><div class="topbar-inner">
+    <a class="brand" href="../" aria-label="EyeTools"><span class="brand-mark" aria-hidden="true">E</span>EyeTools</a>
+    <div class="top-links"><a href="https://github.com/yyyanbj/eyetools">GitHub ↗</a><nav class="languages" aria-label="Language"><a href="../" lang="en">EN</a><span>/</span><a href="./" lang="zh-CN" aria-current="page">中文</a></nav></div>
+  </div></header>
+  <div class="layout">
+    <aside class="sidebar"><p class="sidebar-title">本文导航</p><nav aria-label="本文导航"><a href="#overview">概览</a><a href="#quick-start">快速开始</a><a href="#add-tool">添加工具</a><a href="#call-tool">调用工具</a><a href="#operation">生命周期与接口</a><a href="#environments">隔离环境</a></nav></aside>
+    <main id="main" class="content">
+      <div class="hero"><p class="eyebrow">动态发现 · MCP · Python</p><h1>让工具被动态发现，<br>通过 MCP 随时调用。</h1><p class="lead">EyeTools 根据配置发现工具包、管理工具执行，并通过 MCP 和 HTTP 提供统一的调用入口。</p><div class="actions"><a class="button" href="#quick-start">快速开始 →</a><a class="button secondary" href="https://github.com/yyyanbj/eyetools">查看 GitHub ↗</a></div></div>
+      <section class="content-section" id="overview"><p class="section-kicker">01 / 工作原理</p><h2>从目录到工具</h2><p>将服务指向一个或多个工具目录。服务启动时会递归扫描其中的 <code>config.yaml</code>，注册发现的工具，并向 MCP 客户端提供输入参数结构。添加工具时无需修改服务代码。</p>
+<div class="flow"><div class="flow-item"><small>01 / 描述</small><strong>工具包</strong><p>配置文件与 Python 类。</p></div><div class="flow-item"><small>02 / 发现</small><strong>EyeTools 服务</strong><p>读取配置并注册工具。</p></div><div class="flow-item"><small>03 / 连接</small><strong>MCP 与 HTTP</strong><p>客户端列出并调用工具。</p></div></div>
+<div class="callout"><p>开源框架的 <code>tools/</code> 目录初始为空，不包含具体领域工具、模型权重或数据集。</p></div></section><section class="content-section" id="quick-start"><p class="section-kicker">02 / 开始使用</p><h2>启动服务</h2><p>先安装 <strong>Python 3.12 或更高版本</strong>和 <a href="https://docs.astral.sh/uv/">uv</a>，然后克隆并安装项目：</p><div class="codebox"><div class="code-label">终端</div><pre><code>git clone https://github.com/yyyanbj/eyetools.git
+cd eyetools
+uv sync</code></pre></div><p>在项目根目录启动服务：</p><div class="codebox"><div class="code-label">终端</div><pre><code>uv run eyetools-mcp serve \
+  --host 127.0.0.1 --port 8000 \
+  --tools-dir tools --lifecycle-mode lazy</code></pre></div><p>空服务的 <code>http://127.0.0.1:8000/health</code> 返回 <code>{"status":"ok","tools":0}</code>。HTTP 接口文档位于 <code>/docs</code>，MCP Streamable HTTP 端点位于 <code>/mcp</code>。</p></section><section class="content-section" id="add-tool"><p class="section-kicker">03 / 扩展</p><h2>添加第一个工具</h2><p>在被扫描的工具目录中创建以下两个文件：</p><div class="codebox"><div class="code-label">目录结构</div><pre><code>tools/
+└── echo/
+    ├── config.yaml
+    └── echo_impl.py</code></pre></div><h3>1. 描述工具</h3><p><code>entry</code> 指定模块和类；输入结构用于描述 MCP 客户端看到的参数。</p><div class="codebox"><div class="code-label">tools/echo/config.yaml</div><pre><code>id: echo
+package: echo
+entry: echo_impl:EchoTool
+runtime:
+  load_mode: inproc
+  device_policy: cpu_only
+model:
+  device: cpu
+io:
+  description: Return the supplied message.
+  input_schema:
+    type: object
+    properties:
+      message:
+        type: string
+    required: [message]</code></pre></div><h3>2. 实现工具类</h3><p>服务使用 <code>(meta, params)</code> 创建类实例，并在 <code>request["inputs"]</code> 中传入参数。返回值需可序列化为 JSON。</p><div class="codebox"><div class="code-label">tools/echo/echo_impl.py</div><pre><code>class EchoTool:
+    def __init__(self, meta, params):
+        self.meta = meta
+        self.params = params
+
+    def predict(self, request):
+        return {&quot;message&quot;: request[&quot;inputs&quot;][&quot;message&quot;]}</code></pre></div><p>添加工具后重启服务即可发现。需要扫描多个目录时，可重复指定 <code>--tools-dir</code>。工具还可实现 <code>prepare</code>、<code>load_model</code>、<code>warmup</code> 和 <code>shutdown</code> 生命周期方法。</p>
+<div class="callout"><p>继承 <code>ToolBase</code> 并重写 <code>load_model</code> 时，完成加载后调用 <code>super().load_model()</code>，以记录模型已加载状态。</p></div></section><section class="content-section" id="call-tool"><p class="section-kicker">04 / 连接</p><h2>调用工具</h2><p>重启服务后，先列出已发现的工具，再通过 HTTP 调用 <code>echo</code>：</p><div class="codebox"><div class="code-label">终端</div><pre><code>curl http://127.0.0.1:8000/tools
+curl -X POST http://127.0.0.1:8000/predict \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;tool_id&quot;:&quot;echo&quot;,&quot;request&quot;:{&quot;inputs&quot;:{&quot;message&quot;:&quot;hello&quot;}}}&#x27;</code></pre></div><p>响应包含工具输出和请求元数据（下方时间戳仅为示意）：</p><div class="codebox"><div class="code-label">响应</div><pre><code>{
+  &quot;output&quot;: {&quot;message&quot;: &quot;hello&quot;},
+  &quot;__meta__&quot;: {&quot;tool_id&quot;: &quot;echo&quot;, &quot;inputs&quot;: {&quot;message&quot;: &quot;hello&quot;}, &quot;ts&quot;: 0}
+}</code></pre></div><p>对于支持 Streamable HTTP 的 MCP 客户端，可按其配置格式设置端点。例如：</p><div class="codebox"><div class="code-label">MCP 客户端配置</div><pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;eyetools&quot;: {&quot;url&quot;: &quot;http://127.0.0.1:8000/mcp&quot;}
+  }
+}</code></pre></div><p>在客户端列出工具，然后以 <code>message</code> 参数调用 <code>echo</code>。</p></section><section class="content-section" id="operation"><p class="section-kicker">05 / 运维</p><h2>生命周期与接口</h2><p>使用 <code>--lifecycle-mode</code> 控制工具的加载和卸载：</p><div class="table-wrap"><table><thead><tr><th scope="col">模式</th><th scope="col">行为</th></tr></thead><tbody><tr><td><code>lazy</code></td><td>首次使用时加载工具。</td></tr><tr><td><code>eager</code></td><td>启动时预加载工具，包括子进程。</td></tr><tr><td><code>dynamic</code></td><td>按需加载，并在后台执行空闲与卸载维护。</td></tr></tbody></table></div><p>动态模式可设置 <code>--dynamic-mark-idle-s</code>、<code>--dynamic-unload-s</code> 和 <code>--dynamic-interval-s</code>。常用 HTTP 接口包括：</p><div class="table-wrap"><table><thead><tr><th scope="col">接口</th><th scope="col">用途</th></tr></thead><tbody><tr><td><code>GET /health</code></td><td>服务状态与已发现工具数。</td></tr><tr><td><code>GET /tools</code></td><td>列出已注册工具及其结构。</td></tr><tr><td><code>POST /predict</code></td><td>通过 HTTP 调用工具。</td></tr><tr><td><code>GET /lifecycle</code></td><td>查看生命周期状态。</td></tr><tr><td><code>GET /metrics</code></td><td>查看执行指标。</td></tr><tr><td><code>POST /admin/evict?tool_id=...</code></td><td>卸载工具或停止其子进程。</td></tr><tr><td><code>GET /docs</code></td><td>交互式 HTTP 接口文档。</td></tr></tbody></table></div><div class="callout"><p>接口没有内置身份认证；如果需要从本机以外访问，请在前面配置带认证的代理。</p></div></section><section class="content-section" id="environments"><p class="section-kicker">06 / 隔离</p><h2>工具环境</h2><p>如果工具需要独立依赖，可以在 <code>envs/</code> 下创建专用 uv 项目并使用子进程运行。先在 EyeTools 项目根目录执行：</p><div class="codebox"><div class="code-label">终端</div><pre><code>mkdir -p envs/my-tool
+cd envs/my-tool
+uv init --no-package --no-workspace --python 3.12
+uv add --no-workspace --editable ../..
+# Add the dependencies your tool actually needs:
+# uv add --no-workspace &lt;tool-dependency&gt;
+cd ../..</code></pre></div><p>然后在该工具的 <code>config.yaml</code> 中设置：</p><div class="codebox"><div class="code-label">config.yaml</div><pre><code>environment_ref: my-tool
+runtime:
+  load_mode: subprocess</code></pre></div><p>在该环境中安装工具实际需要的依赖。服务的工作目录是解析 <code>envs/</code> 的工作区根目录。GPU 工具可以显式配置 <code>model.weight_paths</code>，并使用 <code>uv run eyetools-mcp estimate-vram --tool-path tools</code> 估算显存。</p></section>
+      <footer class="footer">EyeTools · 基于 Apache 2.0 许可证开源。 <a href="https://github.com/yyyanbj/eyetools">GitHub ↗</a></footer>
+    </main>
+  </div>
+</body>
+</html>

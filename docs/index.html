@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="EyeTools dynamically discovers tools from configuration and serves them over MCP and HTTP.">
+  <title>Documentation · EyeTools</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="alternate" hreflang="en" href="./">
+  <link rel="alternate" hreflang="zh-CN" href="zh/">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar"><div class="topbar-inner">
+    <a class="brand" href="./" aria-label="EyeTools"><span class="brand-mark" aria-hidden="true">E</span>EyeTools</a>
+    <div class="top-links"><a href="https://github.com/yyyanbj/eyetools">GitHub ↗</a><nav class="languages" aria-label="Language"><a href="./" lang="en" aria-current="page">EN</a><span>/</span><a href="zh/" lang="zh-CN">中文</a></nav></div>
+  </div></header>
+  <div class="layout">
+    <aside class="sidebar"><p class="sidebar-title">On this page</p><nav aria-label="On this page"><a href="#overview">Overview</a><a href="#quick-start">Quick start</a><a href="#add-tool">Add a tool</a><a href="#call-tool">Call a tool</a><a href="#operation">Lifecycle &amp; API</a><a href="#environments">Isolated environments</a></nav></aside>
+    <main id="main" class="content">
+      <div class="hero"><p class="eyebrow">Dynamic discovery · MCP · Python</p><h1>Your tools, discovered and ready for MCP.</h1><p class="lead">EyeTools discovers tool packages from configuration, manages their execution, and exposes them through MCP and HTTP.</p><div class="actions"><a class="button" href="#quick-start">Get started →</a><a class="button secondary" href="https://github.com/yyyanbj/eyetools">View on GitHub ↗</a></div></div>
+      <section class="content-section" id="overview"><p class="section-kicker">01 / HOW IT WORKS</p><h2>From a folder to a tool</h2><p>Point the server at one or more tool directories. At startup it scans recursively for <code>config.yaml</code> files, registers the tools it finds, and exposes their input schemas to MCP clients. Adding a tool does not require editing the server.</p>
+<div class="flow"><div class="flow-item"><small>01 / DESCRIBE</small><strong>Tool package</strong><p>A config and a Python class.</p></div><div class="flow-item"><small>02 / DISCOVER</small><strong>EyeTools server</strong><p>Configuration becomes a registered tool.</p></div><div class="flow-item"><small>03 / CONNECT</small><strong>MCP &amp; HTTP</strong><p>Clients list and invoke your tools.</p></div></div>
+<div class="callout"><p>The open-source framework starts with an empty <code>tools/</code> directory. It does not include domain tools, model weights, or datasets.</p></div></section><section class="content-section" id="quick-start"><p class="section-kicker">02 / GET STARTED</p><h2>Start the server</h2><p>Install <strong>Python 3.12+</strong> and <a href="https://docs.astral.sh/uv/">uv</a>, then clone and install the project:</p><div class="codebox"><div class="code-label">terminal</div><pre><code>git clone https://github.com/yyyanbj/eyetools.git
+cd eyetools
+uv sync</code></pre></div><p>Start the server from the project root:</p><div class="codebox"><div class="code-label">terminal</div><pre><code>uv run eyetools-mcp serve \
+  --host 127.0.0.1 --port 8000 \
+  --tools-dir tools --lifecycle-mode lazy</code></pre></div><p>The empty server reports <code>{"status":"ok","tools":0}</code> at <code>http://127.0.0.1:8000/health</code>. The HTTP API documentation is at <code>/docs</code>, and the streamable HTTP MCP endpoint is <code>/mcp</code>.</p></section><section class="content-section" id="add-tool"><p class="section-kicker">03 / EXTEND</p><h2>Add your first tool</h2><p>Create the following two files inside the scanned tool root:</p><div class="codebox"><div class="code-label">directory</div><pre><code>tools/
+└── echo/
+    ├── config.yaml
+    └── echo_impl.py</code></pre></div><h3>1. Describe the tool</h3><p><code>entry</code> identifies the module and class. The input schema describes the arguments shown to MCP clients.</p><div class="codebox"><div class="code-label">tools/echo/config.yaml</div><pre><code>id: echo
+package: echo
+entry: echo_impl:EchoTool
+runtime:
+  load_mode: inproc
+  device_policy: cpu_only
+model:
+  device: cpu
+io:
+  description: Return the supplied message.
+  input_schema:
+    type: object
+    properties:
+      message:
+        type: string
+    required: [message]</code></pre></div><h3>2. Implement the class</h3><p>The server constructs the class with <code>(meta, params)</code> and passes input arguments under <code>request["inputs"]</code>. Return a JSON-serializable value.</p><div class="codebox"><div class="code-label">tools/echo/echo_impl.py</div><pre><code>class EchoTool:
+    def __init__(self, meta, params):
+        self.meta = meta
+        self.params = params
+
+    def predict(self, request):
+        return {&quot;message&quot;: request[&quot;inputs&quot;][&quot;message&quot;]}</code></pre></div><p>Restart the server to discover a newly added tool. To scan additional directories, repeat <code>--tools-dir</code>. Optional lifecycle hooks include <code>prepare</code>, <code>load_model</code>, <code>warmup</code>, and <code>shutdown</code>.</p>
+<div class="callout"><p>If you subclass <code>ToolBase</code> and override <code>load_model</code>, call <code>super().load_model()</code> after loading to record the loaded state.</p></div></section><section class="content-section" id="call-tool"><p class="section-kicker">04 / CONNECT</p><h2>Call the tool</h2><p>After restarting, list the discovered tools and call <code>echo</code> through HTTP:</p><div class="codebox"><div class="code-label">terminal</div><pre><code>curl http://127.0.0.1:8000/tools
+curl -X POST http://127.0.0.1:8000/predict \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;tool_id&quot;:&quot;echo&quot;,&quot;request&quot;:{&quot;inputs&quot;:{&quot;message&quot;:&quot;hello&quot;}}}&#x27;</code></pre></div><p>The response contains the tool output and request metadata (the timestamp below is illustrative):</p><div class="codebox"><div class="code-label">response</div><pre><code>{
+  &quot;output&quot;: {&quot;message&quot;: &quot;hello&quot;},
+  &quot;__meta__&quot;: {&quot;tool_id&quot;: &quot;echo&quot;, &quot;inputs&quot;: {&quot;message&quot;: &quot;hello&quot;}, &quot;ts&quot;: 0}
+}</code></pre></div><p>For an MCP client that supports streamable HTTP, configure the endpoint using the client’s own settings. For example:</p><div class="codebox"><div class="code-label">MCP client configuration</div><pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;eyetools&quot;: {&quot;url&quot;: &quot;http://127.0.0.1:8000/mcp&quot;}
+  }
+}</code></pre></div><p>List tools in the client and call <code>echo</code> with a <code>message</code> argument.</p></section><section class="content-section" id="operation"><p class="section-kicker">05 / OPERATE</p><h2>Lifecycle and API</h2><p>Set <code>--lifecycle-mode</code> to choose when tools load and unload:</p><div class="table-wrap"><table><thead><tr><th scope="col">Mode</th><th scope="col">Behavior</th></tr></thead><tbody><tr><td> <code>lazy</code></td><td>Load tools on first use.</td></tr><tr><td><code>eager</code></td><td>Preload tools at startup, including subprocess workers.</td></tr><tr><td><code>dynamic</code></td><td>Load on demand and run background idle/unload maintenance.</td></tr></tbody></table></div><p>Dynamic mode accepts <code>--dynamic-mark-idle-s</code>, <code>--dynamic-unload-s</code>, and <code>--dynamic-interval-s</code>. Useful HTTP endpoints include:</p><div class="table-wrap"><table><thead><tr><th scope="col">Endpoint</th><th scope="col">Purpose</th></tr></thead><tbody><tr><td><code>GET /health</code></td><td>Service status and discovered tool count.</td></tr><tr><td><code>GET /tools</code></td><td>List registered tools and their schemas.</td></tr><tr><td><code>POST /predict</code></td><td>Invoke a tool over HTTP.</td></tr><tr><td><code>GET /lifecycle</code></td><td>Inspect lifecycle states.</td></tr><tr><td><code>GET /metrics</code></td><td>Inspect execution metrics.</td></tr><tr><td><code>POST /admin/evict?tool_id=...</code></td><td>Unload a tool or stop its worker.</td></tr><tr><td><code>GET /docs</code></td><td>Interactive HTTP API reference.</td></tr></tbody></table></div><div class="callout"><p>The API has no built-in authentication. If it is reachable beyond localhost, put it behind an authenticated proxy.</p></div></section><section class="content-section" id="environments"><p class="section-kicker">06 / ISOLATE</p><h2>Tool environments</h2><p>For a tool with its own dependencies, use a subprocess and a dedicated uv project under <code>envs/</code>. From the EyeTools project root:</p><div class="codebox"><div class="code-label">terminal</div><pre><code>mkdir -p envs/my-tool
+cd envs/my-tool
+uv init --no-package --no-workspace --python 3.12
+uv add --no-workspace --editable ../..
+# Add the dependencies your tool actually needs:
+# uv add --no-workspace &lt;tool-dependency&gt;
+cd ../..</code></pre></div><p>Set these fields in that tool’s <code>config.yaml</code>:</p><div class="codebox"><div class="code-label">config.yaml</div><pre><code>environment_ref: my-tool
+runtime:
+  load_mode: subprocess</code></pre></div><p>Install the tool’s actual dependencies in that environment. The server working directory is the workspace root used to resolve <code>envs/</code>. For GPU tools, explicit <code>model.weight_paths</code> can be used with <code>uv run eyetools-mcp estimate-vram --tool-path tools</code>.</p></section>
+      <footer class="footer">EyeTools · Open source under the Apache 2.0 license. <a href="https://github.com/yyyanbj/eyetools">GitHub ↗</a></footer>
+    </main>
+  </div>
+</body>
+</html>
